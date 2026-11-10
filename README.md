@@ -402,7 +402,7 @@ prime-tool-v3/
 │       └── publish.yml
 │
 ├── src/
-│   └── prime-tool-v3/
+│   └── primetoolv3/
 │       ├── __init__.py
 │       ├── cli.py
 │       ├── config.py
