@@ -36,4 +36,9 @@ def ensure_app_dirs() -> None:
 
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
-        
+
+def get_venv_dir() -> Path:
+    return get_app_dir()/"venv"
+
+def get_dependency_state_file() -> Path:
+    return get_metadata_dir()/"dependencies.json"

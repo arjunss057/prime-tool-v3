@@ -1,5 +1,6 @@
 import argparse
 import sys
+import shutil
 
 from typing import Optional
 
@@ -7,6 +8,15 @@ from primetoolv3 import __version__
 from primetoolv3.config import APP_NAME
 from primetoolv3.core.downloader import download_release_assets, verify_cached_assets
 from primetoolv3.utils.paths import ensure_app_dirs, get_script_dir
+from primetoolv3.core.dependency_manager import install_dependencies
+from primetoolv3.core.environment import create_environment, remove_environment
+from primetoolv3.core.executor import execute_tool
+from primetoolv3.utils.paths import (
+    get_app_dir,
+    get_script_dir,
+    get_metadata_dir,
+    get_logs_dir
+)
 from primetoolv3.core.version_manager import (
     get_latest_release,
     compare_versions,
@@ -62,15 +72,27 @@ def sync_release(allow_offline: bool = False) -> Optional[dict]:
 def handle_run(args: argparse.Namespace) -> int:
     try:
         release = sync_release(allow_offline=True)
+        if release is None:
+            print("sync_release returned empty")
+            return 1
+
         print()
-        if release is not None:
-            print(f"{APP_NAME} engine: {release['versopm']}")
-            print(f"Script location: {get_script_dir()/'tool.py'}")
-            print()
-            print("Release synchroniztion complete. Execution will be implemented later")
-            return 0
-        print("sync_release returned empty")
-        return 1
+        print(f"{APP_NAME} engine: {release['version']}")
+        print(f"Script location: {get_script_dir()/'tool.py'}")
+        print()
+        
+        create_environment()
+        dependencies_ready = install_dependencies()
+        if not dependencies_ready:
+            print("Dependency installation was cancelled")
+            return 1
+        print()
+        print("Environment preparation completed. ")
+        print("Release synchronization complete. ")
+        print("\nStarting converter...\n")
+        return execute_tool(args.tool_args)
+
+        
     except (RuntimeError, OSError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
@@ -96,9 +118,21 @@ def handle_version(args: argparse.Namespace) -> int:
         print("Tool: Not installed")
     return 0
 
-def handle_clean(args: argparse.Namespace) -> int:
-    print("Local cleanup is not implemented yet")
-    return 2
+def handle_clean(args: argparse.Namespace) -> None:
+    app_dir = get_app_dir()
+    if not app_dir.exists():
+        print("No resources for tool found.")
+        return
+    remove_environment()
+    for directory in (get_script_dir(), get_metadata_dir(), get_logs_dir()):
+        if directory.exists():
+            shutil.rmtree(directory)
+    try:
+        app_dir.rmdir()
+    except OSError:
+        pass
+    print("All primetoolv3-managed resources removed")
+    
 
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -113,7 +147,6 @@ def create_parser() -> argparse.ArgumentParser:
     # run
     run_parser = subparsers.add_parser("run", help="Prepare and execute the tool")
     run_parser.set_defaults(func=handle_run)
-
     # update
     update_parser = subparsers.add_parser("update", help="Download the latest tool release")
     update_parser.set_defaults(func=handle_update)
@@ -130,8 +163,11 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = create_parser()
-    args = parser.parse_args(argv)
-
+    args, unknown_args = parser.parse_known_args(argv)
+    if args.command == "run":
+        args.tool_args = unknown_args
+    elif unknown_args:
+        parser.error(f"Unrecognized arguments: {' '.join(unknown_args)}")
     return args.func(args)
 
 if __name__ == "__main__":
