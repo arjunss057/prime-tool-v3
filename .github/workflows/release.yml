@@ -49,7 +49,7 @@ jobs:
             - name: Generate checksums
               working-directory: engine
               run: |
-                sha256sum tool.py requirements.text > checksums.txt
+                sha256sum tool.py requirements.txt > checksums.txt
                 cat checksums.txt
 
             - name: Create a GitHub release
