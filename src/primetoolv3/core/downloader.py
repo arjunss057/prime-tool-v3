@@ -8,9 +8,20 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from primetoolv3.config import REQUEST_TIMEOUT, CHUNK_SIZE, REQUIRED_ASSETS
+from primetoolv3.config import REQUEST_TIMEOUT, CHUNK_SIZE, REQUIRED_ASSETS, MAX_DOWNLOAD_SIZE
 from primetoolv3.utils.paths import get_app_dir, get_script_dir, ensure_app_dirs
 from primetoolv3.core.version_manager import ReleaseInfo
+
+def validate_download_url(url: str) -> None:
+    parsed = urlparse(url)
+
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        and parsed.hostname != "objects.githubusercontent.com"
+        and parsed.hostname != "release-assets.githubusercontent.com"
+    ):
+        raise RuntimeError("Untrusted download URL")
 
 def calculate_sha256(file_path: Path) -> str:
     '''
@@ -26,16 +37,21 @@ def download_file(url: str, destination: Path) -> None:
     '''
     Download a file over HTTPS
     '''
+    validate_download_url(url)
     if urlparse(url).scheme != "https":
         raise RuntimeError("Only HTTPS downloads are permitted")
     request = Request(url, headers={"User-Agent": "PrimeToolv3-CLI"})
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT) as response:
             with destination.open("wb") as file:
+                total_size = 0
                 while True:
                     chunk = response.read(CHUNK_SIZE)
                     if not chunk:
                         break
+                    total_size += len(chunk)
+                    if total_size > MAX_DOWNLOAD_SIZE:
+                        raise RuntimeError("Download exceeds the maximum permitted size")
                     file.write(chunk)
     except Exception:
         destination.unlink(missing_ok=True)
@@ -61,12 +77,18 @@ def parse_checksums(checksum_file: Path) -> dict[str, str]:
                 raise RuntimeError("Invalid checksum manifest format")
             checksum, filename = parts
             filename = filename.lstrip("*")
+            if Path(filename).name != filename or filename in {".", ".."}:
+                raise RuntimeError(f"Invalid checksum filename: {filename}")
+            
             if not re.fullmatch(r"[a-fA-F0-9]{64}", checksum):
                 raise RuntimeError(f"Invalid SHA-256 hash for {filename}")
+            
             if filename not in REQUIRED_ASSETS - {"checksums.txt"}:
                 raise RuntimeError(f"Unexpected checksum entry: {filename}")
+            
             if filename in checksums:
                 raise RuntimeError(f"Duplicate checksum entry: {filename}")
+            
             checksums[filename] = checksum.lower()
     expected = REQUIRED_ASSETS - {"checksums.txt"}
     if set(checksums) != expected:
@@ -114,13 +136,15 @@ def download_release_assets(release: ReleaseInfo) -> Path:
         raise RuntimeError("Release is missing assets: " + ", ".join(sorted(missing_assets)))
     app_dir = get_app_dir()
     script_dir = get_script_dir()
+    backup_dir = app_dir/".script-backup"
+    if backup_dir.exists() and not script_dir.exists():
+        os.replace(backup_dir, script_dir)
     with tempfile.TemporaryDirectory(prefix=".download-", dir=app_dir) as temporary_directory:
         staging_dir = Path(temporary_directory)
         download_file(release.assets["checksums.txt"], staging_dir/"checksums.txt")
         for filename in ("tool.py", "requirements.txt"):
             download_file(release.assets[filename], staging_dir/filename)
         verify_checksums(staging_dir)
-        backup_dir = app_dir/".script-backup"
         if backup_dir.exists():
             shutil.rmtree(backup_dir)
         if script_dir.exists():

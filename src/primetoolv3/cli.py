@@ -92,7 +92,10 @@ def handle_run(args: argparse.Namespace) -> int:
         print("\nStarting converter...\n")
         return execute_tool(args.tool_args)
 
-        
+    except KeyboardInterrupt:
+        print("Execution interrupted. ", file = sys.stderr)
+        return 130
+
     except (RuntimeError, OSError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
